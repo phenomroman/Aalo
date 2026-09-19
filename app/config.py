@@ -1,6 +1,6 @@
 from functools import lru_cache
 from typing import List
-from pydantic import field_validator
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -9,6 +9,7 @@ class Settings(BaseSettings):
     port: int = 8000
     ollama_base_url: str = "http://127.0.0.1:11434"
     api_key: str = ""
+    api_keys: str = ""
     allowed_origins: str = "*"
 
     model_config = SettingsConfigDict(
@@ -17,15 +18,24 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    @field_validator("api_key")
-    @classmethod
-    def validate_api_key(cls, v: str) -> str:
-        clean = v.strip()
-        if not clean or clean == "aalo-secret-key-change-me":
+    @property
+    def valid_api_keys(self) -> List[str]:
+        """Return list of distinct, sanitized API keys from API_KEY and/or API_KEYS."""
+        combined = f"{self.api_key},{self.api_keys}"
+        keys: List[str] = []
+        for raw in combined.split(","):
+            clean = raw.strip()
+            if clean and clean != "aalo-secret-key-change-me" and clean not in keys:
+                keys.append(clean)
+        return keys
+
+    @model_validator(mode="after")
+    def validate_keys(self) -> "Settings":
+        if not self.valid_api_keys:
             raise ValueError(
-                "A secure API_KEY must be set in your .env file before starting the gateway."
+                "No valid API keys configured. Set API_KEY or API_KEYS (comma-separated) in your .env file."
             )
-        return clean
+        return self
 
     @property
     def cors_origins(self) -> List[str]:
@@ -43,4 +53,5 @@ class Settings(BaseSettings):
 @lru_cache()
 def get_settings() -> Settings:
     return Settings()
+
 

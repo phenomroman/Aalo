@@ -96,7 +96,7 @@ async def list_models(_auth: str = Depends(verify_api_key)):
     models = await ollama_client.list_models()
     return {"models": models}
 
-
+# Chat endpoints
 @app.post("/api/chat", summary="Chat completion with streaming support")
 async def chat_endpoint(
     request: Request,
