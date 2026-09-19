@@ -1,0 +1,24 @@
+# Environment & Secrets
+.env
+.env*.local
+*.env
+
+# Python & Virtual Environments
+.venv/
+venv/
+env/
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Operating System Files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+Thumbs.db
+
+# IDE & Editor files
+.vscode/
+.idea/
