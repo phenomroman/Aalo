@@ -1,12 +1,13 @@
 import logging
 import uuid
 from contextlib import asynccontextmanager
-from typing import Any, Dict
-from fastapi import Depends, FastAPI, Request, status
+from typing import Any, Dict, List, Optional
+from fastapi import Body, Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
+from pydantic import BaseModel, ConfigDict
 from app.auth import verify_api_key
-from app.config import Settings, get_settings
+from app.config import get_settings
 from app.ollama_client import OllamaClient
 
 logging.basicConfig(
@@ -19,10 +20,25 @@ settings = get_settings()
 ollama_client = OllamaClient(settings)
 
 
+class ChatRequest(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    model: str
+    messages: Optional[List[Dict[str, Any]]] = None
+    stream: bool = True
+    think: bool = False
+    task_id: Optional[str] = None
+
+
+class AbortRequest(BaseModel):
+    task_id: Optional[str] = None
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("Initializing Aalo Gateway...")
     logger.info("Checking connection to local Ollama on %s...", settings.ollama_base_url)
+    await ollama_client.start()
     health = await ollama_client.check_health()
     if health.get("status") == "connected":
         logger.info(
@@ -38,6 +54,7 @@ async def lifespan(app: FastAPI):
         )
     yield
     logger.info("Aalo Gateway shutting down.")
+    await ollama_client.close()
 
 
 app = FastAPI(
@@ -51,14 +68,16 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,
-    allow_credentials=True,
+    allow_credentials=settings.cors_allow_credentials,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
+
 @app.get("/")
 def read_root():
     return {"status": "Aalo Gateway Running"}
+
 
 @app.get("/health", summary="Health check for Gateway and local Ollama")
 async def health_check():
@@ -77,69 +96,44 @@ async def list_models(_auth: str = Depends(verify_api_key)):
     models = await ollama_client.list_models()
     return {"models": models}
 
-# Chat endpoints
+
 @app.post("/api/chat", summary="Chat completion with streaming support")
 async def chat_endpoint(
     request: Request,
+    body: ChatRequest,
     _auth: str = Depends(verify_api_key),
 ):
     """Proxy chat requests to local Ollama with real-time SSE streaming or JSON output."""
-    try:
-        body: Dict[str, Any] = await request.json()
-    except Exception:
-        return JSONResponse(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            content={"detail": "Invalid JSON body"},
-        )
-    
-    # Extract task_id if frontend provides one, otherwise generate one
-    task_id = body.get("task_id", str(uuid.uuid4()))
+    task_id = body.task_id or str(uuid.uuid4())
+    payload = body.model_dump()
+    payload["task_id"] = task_id
 
-    model = body.get("model")
-    if not model:
-        return JSONResponse(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            content={"detail": "Missing required field 'model'"},
-        )
-
-    if "think" not in body:
-        body["think"] = False
-    else:
-        body["think"] = bool(body["think"])
-
-    stream = body.get("stream", True)
-    if stream:
+    if body.stream:
         return StreamingResponse(
-            ollama_client.stream_chat(body, request, task_id), # <--- PASSED request and task_id HERE
+            ollama_client.stream_chat(payload, request, task_id),
             media_type="text/event-stream",
             headers={
                 "Cache-Control": "no-cache",
                 "Connection": "keep-alive",
-                "X-Accel-Buffering": "no",  
+                "X-Accel-Buffering": "no",
             },
         )
     else:
-        result = await ollama_client.chat_non_streaming(body, request, task_id) # <--- PASSED request and task_id HERE
+        result = await ollama_client.chat_non_streaming(payload, request, task_id)
         return JSONResponse(content=result)
+
 
 @app.post("/api/chat/abort", summary="Manually abort inference")
 async def abort_inference_endpoint(
-    request: Request,
-    _auth: str = Depends(verify_api_key)
+    body: Optional[AbortRequest] = Body(None),
+    _auth: str = Depends(verify_api_key),
 ):
     """Explicitly stop ongoing Ollama inference via frontend Stop button."""
-    try:
-        body = await request.json()
-        task_id = body.get("task_id")
-    except Exception:
-        # If no JSON body is sent, default to None
-        task_id = None
-        
-    # If task_id is None, abort ALL active local generations
+    task_id = body.task_id if body else None
     aborted_count = ollama_client.abort_inference(task_id)
-    
+
     return {
-        "status": "success", 
-        "detail": "Inference aborted", 
-        "tasks_aborted": aborted_count
+        "status": "success",
+        "detail": "Inference aborted",
+        "tasks_aborted": aborted_count,
     }
