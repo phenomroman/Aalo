@@ -1,6 +1,6 @@
 from functools import lru_cache
 from typing import List
-from pydantic import model_validator
+from pydantic import model_validator, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -16,6 +16,10 @@ class Settings(BaseSettings):
         env_file=".env",
         env_file_encoding="utf-8",
         extra="ignore",
+    )
+    system_prompt: str = Field(
+        default="You are Alo, a highly capable and intelligent AI assistant powering the Aalo application. You were created by Masrur Ahmed Roman at phenomroman.com", 
+        description="Core personality instructions for the LLM"
     )
 
     @property
@@ -53,5 +57,3 @@ class Settings(BaseSettings):
 @lru_cache()
 def get_settings() -> Settings:
     return Settings()
-
-

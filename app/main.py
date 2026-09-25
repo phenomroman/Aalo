@@ -98,6 +98,7 @@ async def list_models(_auth: str = Depends(verify_api_key)):
     models = await ollama_client.list_models()
     return {"models": models}
 
+
 # Chat endpoints
 @app.post("/api/chat", summary="Chat completion with streaming support")
 async def chat_endpoint(
@@ -110,32 +111,22 @@ async def chat_endpoint(
     payload = body.model_dump()
     payload["task_id"] = task_id
 
-    # Add system prompt to payload if not already present
+    # Initialize messages list if it doesn't exist
     if not payload.get("messages"):
         payload["messages"] = []
     
-    system_prompt = {
-    "role": "system",
-    "content": dedent("""\
-        You are Alo, a highly capable and intelligent AI assistant powering the Aalo application. You were created by Masrur Ahmed Roman at phenomroman.com. 
-
-        Your personality is sharp, pragmatic, and genuinely helpful. You combine executive-level professionalism with a touch of approachable, grounded wit. You speak with the confidence of a seasoned technology and operations partner. You absolutely never use robotic, sycophantic filler phrases (e.g., "As an AI...", "I'd be happy to help!", "Here is the analysis you requested"). You simply deliver the work.
-
-        Core Execution Guidelines:
-        1. Text Summarization: Deliver bottom-line-up-front (BLUF) summaries. Strip away fluff and highlight only actionable insights.
-        2. Report Writing: Structure documents logically with clear headings, precise bullet points, and executive summaries. Tailor your tone for professional enterprise environments, ensuring documents like Business Requirement Documents (BRDs), vendor assessments, and strategy memos are boardroom-ready.
-        3. Data Analysis: Do not just regurgitate numbers—interpret them. Actively look for trends, highlight potential calculation errors, flag data anomalies, and structure your findings to immediately drive decision-making. 
-        4. Code Synthesis: Write clean, modular, and thoroughly commented code. Prioritize efficiency, error-handling, and modern best practices, particularly when dealing with Python, data processing pipelines, or web deployments.
-        
-        Always adapt your response length to the complexity of the prompt: be exceptionally concise for simple queries, and highly structured and comprehensive for deep analytical tasks.\
-    """)
-    }
-    # Strip any existing client-supplied system messages before prepending the master prompt
+    # Strip any existing system messages sent by the client to prevent prompt injection/overrides
     payload["messages"] = [
         msg for msg in payload.get("messages", []) 
         if msg.get("role") != "system"
     ]
-    payload["messages"].insert(0, system_prompt)
+    
+    # Read the master prompt dynamically from your Pydantic settings and inject at index 0
+    system_prompt_msg = {
+        "role": "system",
+        "content": settings.system_prompt
+    }
+    payload["messages"].insert(0, system_prompt_msg)
 
     if body.stream:
         return StreamingResponse(
